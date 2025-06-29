@@ -1,0 +1,69 @@
+{
+  "test_data_injection": {
+    "results": [
+      {
+        "id": "123456782",
+        "name": "John Doe",
+        "status": "success",
+        "http_code": 201
+      }
+,
+      {
+        "id": "87654321",
+        "name": "Jane Smith",
+        "status": "failed",
+        "http_code": 422,
+        "error": "{'detail':[{'type':'value_error','loc':['body','id'],'msg':'Value error, Invalid Israeli ID: must be"
+      }
+,
+      {
+        "id": "12345678",
+        "name": "Bob Johnson",
+        "status": "failed",
+        "http_code": 422,
+        "error": "{'detail':[{'type':'value_error','loc':['body','id'],'msg':'Value error, Invalid Israeli ID: must be"
+      }
+,
+      {
+        "id": "320780694",
+        "name": "Alice Brown",
+        "status": "failed",
+        "http_code": 422,
+        "error": "{'detail':[{'type':'value_error','loc':['body','id'],'msg':'Value error, Invalid Israeli ID: must be"
+      }
+,
+      {
+        "id": "11223344",
+        "name": "David Wilson",
+        "status": "success",
+        "http_code": 201
+      }
+
+    ],
+    "summary": {
+      "successful": 2,
+      "failed": 3,
+      "total": 5
+    }
+  },
+  "comprehensive_tests": {
+    "results": [
+      {
+        "test_name": "server_unit_tests",
+        "status": "FAILED"
+      }
+,
+      {
+        "test_name": "http_integration_tests",
+        "status": "FAILED"
+      }
+,
+      {
+        "test_name": "api_contract_tests",
+        "status": "PASSED"
+      }
+
+    ],
+    "overall_success": false
+  }
+}

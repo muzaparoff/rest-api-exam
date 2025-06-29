@@ -1,0 +1,29 @@
+# Enhanced testing requirements with pytest ecosystem
+pytest==7.4.3
+pytest-cov==4.1.0          # Code coverage reporting
+pytest-html==4.1.1         # HTML test reports
+pytest-xdist==3.5.0        # Parallel test execution
+pytest-mock==3.12.0        # Enhanced mocking capabilities
+pytest-asyncio==0.23.2     # Async test support
+pytest-benchmark==4.0.0    # Performance benchmarking
+pytest-timeout==2.2.0      # Test timeout handling
+pytest-randomly==3.15.0    # Randomize test order
+pytest-clarity==1.0.1      # Better assertion output
+pytest-sugar==0.9.7        # Better test output formatting
+
+# HTTP testing
+httpx==0.25.2              # HTTP client for FastAPI testing
+responses==0.24.1          # Mock HTTP responses
+
+# Test utilities
+factory-boy==3.3.0         # Test data factories
+faker==20.1.0              # Fake data generation
+freezegun==1.2.2           # Time mocking
+testcontainers==3.7.1      # Docker containers for testing
+
+# Development tools
+black==23.11.0             # Code formatting
+isort==5.12.0              # Import sorting
+flake8==6.1.0              # Linting
+mypy==1.7.1                # Type checking
+pre-commit==3.6.0          # Git hooks
