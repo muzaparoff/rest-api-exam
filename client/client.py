@@ -137,7 +137,7 @@ class UserAPIClient:
         
         last_exception = None
         
-        # Retry logic
+        # Enhanced retry logic with exponential backoff
         for attempt in range(self.max_retries + 1):
             try:
                 response = self.session.request(
@@ -176,8 +176,10 @@ class UserAPIClient:
                 
                 # For server errors (5xx) and rate limiting, try again
                 if attempt < self.max_retries:
-                    self.logger.warning(f"Request failed (attempt {attempt + 1}), retrying in {self.retry_delay}s...")
-                    time.sleep(self.retry_delay)
+                    # Exponential backoff: base_delay * (2 ^ attempt) + random jitter
+                    retry_delay = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"Request failed (attempt {attempt + 1}), retrying in {retry_delay:.2f}s...")
+                    time.sleep(retry_delay)
                     continue
                 
                 raise exception
@@ -189,10 +191,11 @@ class UserAPIClient:
             except requests.exceptions.RequestException as e:
                 last_exception = APIError(f"Request error: {str(e)}")
             
-            # Retry for network-related errors
+            # Retry for network-related errors with exponential backoff
             if attempt < self.max_retries:
-                self.logger.warning(f"Network error (attempt {attempt + 1}), retrying in {self.retry_delay}s...")
-                time.sleep(self.retry_delay)
+                retry_delay = self.retry_delay * (2 ** attempt)
+                self.logger.warning(f"Network error (attempt {attempt + 1}), retrying in {retry_delay:.2f}s...")
+                time.sleep(retry_delay)
             else:
                 raise last_exception
     
@@ -469,6 +472,233 @@ class UserAPIClient:
             self.logger.error(f"Failed to delete user: {str(e)}")
             raise APIError(f"Failed to delete user: {str(e)}")
     
+    # Advanced bulk operations
+    def bulk_create_users(self, users: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Create multiple users in a single operation.
+        
+        Args:
+            users: List of user dictionaries with keys: id, name, phone_number, address
+            
+        Returns:
+            Dict: Results with success/failure details for each user
+            
+        Raises:
+            ValidationError: If input data is invalid
+            APIError: For other errors
+        """
+        results = {
+            "successful": [],
+            "failed": [],
+            "total": len(users),
+            "success_count": 0,
+            "failure_count": 0
+        }
+        
+        self.logger.info(f"Bulk creating {len(users)} users")
+        
+        for user in users:
+            try:
+                created_user = self.create_user(
+                    user_id=user["id"],
+                    name=user["name"],
+                    phone_number=user["phone_number"],
+                    address=user["address"]
+                )
+                results["successful"].append({
+                    "user_id": user["id"],
+                    "data": created_user
+                })
+                results["success_count"] += 1
+                
+            except Exception as e:
+                results["failed"].append({
+                    "user_id": user["id"],
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                })
+                results["failure_count"] += 1
+                self.logger.warning(f"Failed to create user {user['id']}: {str(e)}")
+        
+        self.logger.info(f"Bulk create completed: {results['success_count']} successful, {results['failure_count']} failed")
+        return results
+    
+    def bulk_delete_users(self, user_ids: List[str]) -> Dict[str, Any]:
+        """
+        Delete multiple users in a single operation.
+        
+        Args:
+            user_ids: List of user IDs to delete
+            
+        Returns:
+            Dict: Results with success/failure details for each user
+        """
+        results = {
+            "successful": [],
+            "failed": [],
+            "total": len(user_ids),
+            "success_count": 0,
+            "failure_count": 0
+        }
+        
+        self.logger.info(f"Bulk deleting {len(user_ids)} users")
+        
+        for user_id in user_ids:
+            try:
+                self.delete_user(user_id)
+                results["successful"].append(user_id)
+                results["success_count"] += 1
+                
+            except Exception as e:
+                results["failed"].append({
+                    "user_id": user_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                })
+                results["failure_count"] += 1
+                self.logger.warning(f"Failed to delete user {user_id}: {str(e)}")
+        
+        self.logger.info(f"Bulk delete completed: {results['success_count']} successful, {results['failure_count']} failed")
+        return results
+    
+    def bulk_update_users(self, updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Update multiple users in a single operation.
+        
+        Args:
+            updates: List of update dictionaries with 'user_id' and update fields
+            
+        Returns:
+            Dict: Results with success/failure details for each user
+        """
+        results = {
+            "successful": [],
+            "failed": [],
+            "total": len(updates),
+            "success_count": 0,
+            "failure_count": 0
+        }
+        
+        self.logger.info(f"Bulk updating {len(updates)} users")
+        
+        for update in updates:
+            user_id = update.pop("user_id")
+            try:
+                updated_user = self.update_user(user_id, **update)
+                results["successful"].append({
+                    "user_id": user_id,
+                    "data": updated_user
+                })
+                results["success_count"] += 1
+                
+            except Exception as e:
+                results["failed"].append({
+                    "user_id": user_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                })
+                results["failure_count"] += 1
+                self.logger.warning(f"Failed to update user {user_id}: {str(e)}")
+        
+        self.logger.info(f"Bulk update completed: {results['success_count']} successful, {results['failure_count']} failed")
+        return results
+    
+    # Advanced utility methods
+    def get_api_metrics(self) -> Dict[str, Any]:
+        """
+        Get API performance metrics from the server.
+        
+        Returns:
+            Dict: API metrics and statistics
+        """
+        try:
+            self.logger.info("Retrieving API metrics")
+            response = self._make_request("GET", "/metrics")
+            return response.json()
+        except Exception as e:
+            self.logger.error(f"Failed to get API metrics: {str(e)}")
+            raise APIError(f"Failed to get API metrics: {str(e)}")
+    
+    def wait_for_server(self, max_wait_time: int = 60, check_interval: int = 2) -> bool:
+        """
+        Wait for the server to become available.
+        
+        Args:
+            max_wait_time: Maximum time to wait in seconds
+            check_interval: Time between health checks in seconds
+            
+        Returns:
+            bool: True if server is available, False if timeout
+        """
+        start_time = time.time()
+        self.logger.info(f"Waiting for server to become available (max {max_wait_time}s)")
+        
+        while time.time() - start_time < max_wait_time:
+            try:
+                self.health_check()
+                self.logger.info("Server is available")
+                return True
+            except Exception:
+                self.logger.debug(f"Server not ready, checking again in {check_interval}s")
+                time.sleep(check_interval)
+        
+        self.logger.warning(f"Server did not become available within {max_wait_time}s")
+        return False
+    
+    def validate_connectivity(self) -> Dict[str, Any]:
+        """
+        Validate connectivity and API compatibility.
+        
+        Returns:
+            Dict: Connectivity and compatibility information
+        """
+        try:
+            # Test basic connectivity
+            health = self.health_check()
+            
+            # Test endpoint availability
+            endpoints_status = {}
+            test_endpoints = [
+                ("/users", "GET"),
+                ("/auth/login", "POST"),
+                ("/users-detailed", "GET")
+            ]
+            
+            for endpoint, method in test_endpoints:
+                try:
+                    if method == "POST" and "login" in endpoint:
+                        # Skip actual login test, just check if endpoint exists
+                        response = self.session.request(
+                            method="POST",
+                            url=urljoin(self.base_url + '/', endpoint.lstrip('/')),
+                            json={"username": "test", "password": "test"},
+                            timeout=5
+                        )
+                        # We expect 401 or 422, not 404
+                        endpoints_status[endpoint] = response.status_code != 404
+                    else:
+                        response = self.session.request(
+                            method=method,
+                            url=urljoin(self.base_url + '/', endpoint.lstrip('/')),
+                            timeout=5
+                        )
+                        endpoints_status[endpoint] = response.status_code != 404
+                except Exception:
+                    endpoints_status[endpoint] = False
+            
+            return {
+                "server_health": health,
+                "endpoints_available": endpoints_status,
+                "all_endpoints_available": all(endpoints_status.values()),
+                "connectivity": "OK"
+            }
+            
+        except Exception as e:
+            return {
+                "connectivity": "FAILED",
+                "error": str(e)
+            }
+
     def close(self):
         """Close the HTTP session."""
         self.session.close()

@@ -6,10 +6,11 @@ for data validation and serialization.
 """
 from sqlalchemy import Column, String, DateTime, Index
 from sqlalchemy.ext.declarative import declarative_base
-from pydantic import BaseModel, validator, Field
+from pydantic import BaseModel, field_validator, Field, ConfigDict
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import logging
+import uuid
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -52,7 +53,8 @@ class UserCreate(BaseModel):
     phone_number: str = Field(..., description="Israeli phone number (must start with 05)")
     address: str = Field(..., min_length=1, max_length=200, description="User's address")
     
-    @validator('id')
+    @field_validator('id')
+    @classmethod
     def validate_israeli_id(cls, v):
         """Validate Israeli ID format and checksum"""
         from validators import validate_israeli_id
@@ -61,7 +63,8 @@ class UserCreate(BaseModel):
             raise ValueError('Invalid Israeli ID: must be 8-9 digits with valid checksum')
         return v.strip()
     
-    @validator('phone_number')
+    @field_validator('phone_number')
+    @classmethod
     def validate_phone_format(cls, v):
         """Validate Israeli phone number format"""
         from validators import validate_phone_number
@@ -73,7 +76,8 @@ class UserCreate(BaseModel):
         import re
         return re.sub(r'\D', '', v)
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_name(cls, v):
         """Validate user name"""
         if not v or not v.strip():
@@ -85,7 +89,8 @@ class UserCreate(BaseModel):
         
         return v.strip()
     
-    @validator('address')
+    @field_validator('address')
+    @classmethod
     def validate_address(cls, v):
         """Validate user address"""
         if not v or not v.strip():
@@ -93,8 +98,8 @@ class UserCreate(BaseModel):
         
         return v.strip()
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra = {
             "example": {
                 "id": "123456782",
                 "name": "John Doe",
@@ -102,6 +107,7 @@ class UserCreate(BaseModel):
                 "address": "123 Main St, Tel Aviv"
             }
         }
+    )
 
 class UserUpdate(BaseModel):
     """
@@ -113,7 +119,8 @@ class UserUpdate(BaseModel):
     phone_number: Optional[str] = Field(None, description="Israeli phone number (must start with 05)")
     address: Optional[str] = Field(None, min_length=1, max_length=200, description="User's address")
     
-    @validator('phone_number')
+    @field_validator('phone_number')
+    @classmethod
     def validate_phone_format(cls, v):
         """Validate Israeli phone number format if provided"""
         if v is not None:
@@ -127,7 +134,8 @@ class UserUpdate(BaseModel):
             return re.sub(r'\D', '', v)
         return v
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_name(cls, v):
         """Validate user name if provided"""
         if v is not None:
@@ -138,7 +146,8 @@ class UserUpdate(BaseModel):
             return v.strip()
         return v
     
-    @validator('address')
+    @field_validator('address')
+    @classmethod
     def validate_address(cls, v):
         """Validate user address if provided"""
         if v is not None:
@@ -160,9 +169,9 @@ class UserResponse(BaseModel):
     created_at: datetime = Field(..., description="Record creation timestamp")
     updated_at: datetime = Field(..., description="Record last update timestamp")
     
-    class Config:
-        orm_mode = True
-        schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra = {
             "example": {
                 "id": "123456782",
                 "name": "John Doe",
@@ -172,6 +181,7 @@ class UserResponse(BaseModel):
                 "updated_at": "2023-12-01T10:00:00"
             }
         }
+    )
 
 class UserList(BaseModel):
     """
@@ -220,19 +230,63 @@ class HealthResponse(BaseModel):
             }
         }
 
+# Enhanced Error Response Models
 class ErrorResponse(BaseModel):
-    """
-    Pydantic model for error responses.
-    """
-    detail: str = Field(..., description="Error description")
-    error_code: Optional[str] = Field(None, description="Application-specific error code")
+    """Standardized error response format for professional API responses"""
+    error: str = Field(..., description="Error type/category")
+    message: str = Field(..., description="Human-readable error message")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+    path: Optional[str] = Field(None, description="API endpoint path where error occurred")
+    request_id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique request identifier")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
-                "detail": "User not found",
-                "error_code": "USER_NOT_FOUND",
-                "timestamp": "2023-12-01T10:00:00"
+                "error": "ValidationError",
+                "message": "Invalid Israeli ID format",
+                "details": {"field": "id", "value": "123", "requirement": "8-9 digits"},
+                "timestamp": "2023-12-01T10:00:00Z",
+                "path": "/users",
+                "request_id": "req_123456789"
+            }
+        }
+
+class ValidationErrorResponse(ErrorResponse):
+    """Enhanced validation error with field-specific details"""
+    error: str = Field(default="ValidationError", description="Always 'ValidationError'")
+    validation_errors: List[Dict[str, Any]] = Field(..., description="List of field validation errors")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "error": "ValidationError",
+                "message": "Request validation failed",
+                "validation_errors": [
+                    {"field": "id", "message": "Invalid Israeli ID checksum", "value": "123456789"},
+                    {"field": "phone_number", "message": "Must start with '05'", "value": "0521234567"}
+                ],
+                "timestamp": "2023-12-01T10:00:00Z",
+                "path": "/users",
+                "request_id": "req_123456789"
+            }
+        }
+
+class NotFoundErrorResponse(ErrorResponse):
+    """Enhanced not found error response"""
+    error: str = Field(default="NotFoundError", description="Always 'NotFoundError'")
+    resource_type: str = Field(..., description="Type of resource not found")
+    resource_id: str = Field(..., description="ID of resource not found")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "error": "NotFoundError",
+                "message": "User not found",
+                "resource_type": "User",
+                "resource_id": "123456782",
+                "timestamp": "2023-12-01T10:00:00Z",
+                "path": "/users/123456782",
+                "request_id": "req_123456789"
             }
         }

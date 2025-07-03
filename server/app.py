@@ -22,25 +22,27 @@ from sqlalchemy import and_, or_
 
 from models import (
     User, UserCreate, UserUpdate, UserResponse, UserList,
-    HealthResponse, ErrorResponse
+    HealthResponse, ErrorResponse, ValidationErrorResponse,
+    NotFoundErrorResponse
 )
 from database import get_db, init_db, check_db_health
 from auth import verify_token, authenticate_user, create_user_token
 from validators import validate_israeli_id, validate_phone_number
+from settings import get_settings, configure_logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('/app/logs/api.log') if os.path.exists('/app/logs') else logging.NullHandler()
-    ]
-)
+# Get application settings
+settings = get_settings()
+
+# Configure logging using settings
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Security
 security = HTTPBearer(auto_error=False)
+
+# API Configuration from settings
+API_VERSION = settings.api_version
+API_PREFIX_V1 = "/api/v1"
 
 # Application lifecycle management
 @asynccontextmanager
@@ -63,24 +65,38 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down User Management API...")
 
-# Create FastAPI application
+# Create FastAPI application with enhanced configuration from settings
 app = FastAPI(
-    title="User Management API",
-    description="REST API for managing users with Israeli ID and phone validation",
-    version="1.0.0",
+    title=settings.api_title,
+    description=settings.api_description + " Supports versioning, comprehensive monitoring, "
+                "and environment-based configuration.",
+    version=settings.api_version,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
-    lifespan=lifespan
+    lifespan=lifespan,
+    contact={
+        "name": "API Support Team",
+        "email": "api-support@company.com",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    servers=[
+        {"url": "http://localhost:8000", "description": "Development server"},
+        {"url": "https://api.company.com", "description": "Production server"},
+    ],
+    debug=settings.debug
 )
 
-# Add middleware
+# Add enhanced middleware with settings configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
 )
 
 app.add_middleware(
@@ -88,17 +104,74 @@ app.add_middleware(
     allowed_hosts=["*"]  # Configure appropriately for production
 )
 
-# Request logging middleware
+# Enhanced metrics and monitoring middleware
+@app.middleware("http")
+async def add_process_time_and_metrics(request: Request, call_next):
+    """Add comprehensive request metrics and monitoring"""
+    import time
+    import uuid
+    
+    # Generate unique request ID
+    request_id = str(uuid.uuid4())[:8]
+    
+    # Record request start time
+    start_time = time.time()
+    
+    # Add request ID to headers
+    request.state.request_id = request_id
+    
+    # Log request with metrics
+    logger.info(
+        f"[{request_id}] Request: {request.method} {request.url.path} - "
+        f"Client: {request.client.host if request.client else 'unknown'} - "
+        f"User-Agent: {request.headers.get('user-agent', 'unknown')}"
+    )
+    
+    # Process request
+    try:
+        response = await call_next(request)
+        
+        # Calculate processing time
+        process_time = time.time() - start_time
+        
+        # Add metrics headers
+        response.headers["X-Process-Time"] = f"{process_time:.4f}"
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-API-Version"] = API_VERSION
+        
+        # Log response with metrics
+        logger.info(
+            f"[{request_id}] Response: {response.status_code} - "
+            f"Duration: {process_time:.4f}s - "
+            f"Size: {response.headers.get('content-length', 'unknown')} bytes"
+        )
+        
+        # Log slow requests (>1 second)
+        if process_time > 1.0:
+            logger.warning(
+                f"[{request_id}] SLOW REQUEST: {request.method} {request.url.path} - "
+                f"Duration: {process_time:.4f}s"
+            )
+        
+        return response
+        
+    except Exception as e:
+        # Calculate processing time even for errors
+        process_time = time.time() - start_time
+        
+        logger.error(
+            f"[{request_id}] Error: {str(e)} - "
+            f"Duration: {process_time:.4f}s - "
+            f"Path: {request.url.path}"
+        )
+        raise
+
+# Request logging middleware (legacy - keeping for compatibility)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all incoming requests"""
-    start_time = datetime.utcnow()
-    
-    # Log request
-    logger.info(
-        f"Request: {request.method} {request.url} - "
-        f"Client: {request.client.host if request.client else 'unknown'}"
-    )
+    # This middleware is now handled by the enhanced metrics middleware above
+    return await call_next(request)
     
     # Process request
     response = await call_next(request)
@@ -156,6 +229,29 @@ async def health_check():
         logger.warning("Health check failed - database connectivity issues")
     
     return response
+
+# Metrics endpoint
+@app.get("/metrics", tags=["Metrics"])
+async def get_metrics():
+    """
+    Get API metrics and statistics.
+    
+    Returns:
+        dict: API metrics data
+    """
+    uptime = (datetime.utcnow() - app.state.start_time).total_seconds()
+    total_requests = getattr(app.state, 'total_requests', 0)
+    
+    metrics = {
+        "api_version": API_VERSION,
+        "uptime_seconds": uptime,
+        "total_requests": total_requests,
+        "database_status": "connected",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    logger.info(f"Metrics requested: {metrics}")
+    return metrics
 
 # Authentication endpoints
 @app.post("/auth/login", tags=["Authentication"])
@@ -520,6 +616,27 @@ async def general_exception_handler(request: Request, exc: Exception):
         "timestamp": datetime.utcnow().isoformat(),
         "path": str(request.url)
     }
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application state on startup."""
+    app.state.start_time = datetime.utcnow()
+    app.state.total_requests = 0
+    logger.info(f"API Server starting up - Version {API_VERSION}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    logger.info("API Server shutting down")
+
+@app.middleware("http")
+async def add_request_counter(request: Request, call_next):
+    """Middleware to count total requests."""
+    if not hasattr(app.state, 'total_requests'):
+        app.state.total_requests = 0
+    app.state.total_requests += 1
+    response = await call_next(request)
+    return response
 
 if __name__ == "__main__":
     import uvicorn
